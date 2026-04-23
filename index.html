@@ -84,6 +84,30 @@
             color: #FF6B8B;
             font-weight: bold;
         }
+
+        /* 開場圖片樣式 */
+        #splash-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #FCE4EC; /* 馬卡龍粉紅底色 */
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            opacity: 1;
+            transition: opacity 1s ease-out;
+            pointer-events: none;
+        }
+
+        #splash-screen img {
+            max-width: 80%;
+            max-height: 80%;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
     </style>
     <!-- 引入 Three.js 和 PointerLockControls -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
@@ -106,6 +130,11 @@
         </div>
     </div>
 
+    <!-- 開場顯示的圖片 -->
+    <div id="splash-screen">
+        <img src="https://docs.google.com/drawings/d/1jEW4_-FgFHj1dgNvfKQD3ykP7eLmXN8FakP7ubrWj74/export/png" alt="遊戲標題">
+    </div>
+
     <script>
         // 遊戲全域變數
         let camera, scene, renderer, controls;
@@ -118,6 +147,10 @@
         let moveLeft = false;
         let moveRight = false;
         let stepTimer = 0.4; // 腳步聲音效計時器
+
+        // 開場動畫狀態控制
+        let isGameStarted = false;
+        let isSplashShowing = false;
 
         let prevTime = performance.now();
         const velocity = new THREE.Vector3();
@@ -217,11 +250,39 @@
                 instructions.style.display = 'none';
                 blocker.style.display = 'none';
                 if(audioCtx.state === 'suspended') audioCtx.resume();
+
+                // 首次進入遊戲時播放開場圖片
+                if (!isGameStarted) {
+                    isSplashShowing = true;
+                    const splash = document.getElementById('splash-screen');
+                    splash.style.display = 'flex';
+                    
+                    // 顯示 3 秒後開始淡出
+                    setTimeout(() => {
+                        splash.style.opacity = '0';
+                        setTimeout(() => {
+                            splash.style.display = 'none';
+                            isSplashShowing = false;
+                            isGameStarted = true;
+                        }, 1000); // 等待 1 秒的淡出動畫
+                    }, 3000); // 顯示 3 秒
+                }
             });
 
             controls.addEventListener('unlock', function () {
-                blocker.style.display = 'flex';
-                instructions.style.display = '';
+                if (!isSplashShowing) {
+                    blocker.style.display = 'flex';
+                    instructions.style.display = '';
+                } else {
+                    // 若在開場動畫時按 ESC 退出
+                    blocker.style.display = 'flex';
+                    instructions.style.display = '';
+                    const splash = document.getElementById('splash-screen');
+                    splash.style.display = 'none';
+                    splash.style.opacity = '0';
+                    isSplashShowing = false;
+                    isGameStarted = true; 
+                }
             });
 
             scene.add(controls.getObject());
@@ -445,7 +506,8 @@
         const mouse = new THREE.Vector2(0, 0); // 準心永遠在畫面中央
 
         function onMouseClick() {
-            if (!controls.isLocked) return;
+            // 如果還沒鎖定滑鼠，或者正在顯示開場動畫，則不能射擊
+            if (!controls.isLocked || isSplashShowing) return;
 
             playSound('shoot');
 
@@ -528,7 +590,8 @@
 
             const time = performance.now();
 
-            if (controls.isLocked === true) {
+            // 必須在鎖定滑鼠且非開場動畫期間才執行遊戲邏輯
+            if (controls.isLocked === true && !isSplashShowing) {
                 const delta = (time - prevTime) / 1000;
 
                 // 1. 玩家移動邏輯 (簡單物理)
