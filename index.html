@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <title>英文單字射擊特訓班 (FPS)</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #FCE4EC; /* 馬卡龍粉紅 */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* 讓點擊穿透到畫布 */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            transform: translate(-50%, -50%);
+            color: #ff0000;
+            font-size: 24px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #score-board {
+            padding: 20px;
+            font-size: 32px;
+            font-weight: bold;
+            color: #FF8BA7;
+            text-shadow: 1px 1px 0px #fff;
+        }
+
+        #blocker {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 230, 240, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto; /* 阻擋層需要接收點擊 */
+            z-index: 10;
+        }
+
+        #instructions {
+            text-align: center;
+            color: #333;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 40px;
+            border-radius: 20px;
+            border: 5px dashed #FFB7B2;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+        }
+
+        #instructions h1 {
+            font-size: 48px;
+            margin-bottom: 10px;
+            color: #FF8BA7;
+        }
+
+        #instructions p {
+            font-size: 24px;
+            line-height: 1.5;
+            color: #555;
+        }
+
+        .highlight {
+            color: #FF6B8B;
+            font-weight: bold;
+        }
+    </style>
+    <!-- 引入 Three.js 和 PointerLockControls -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div id="score-board">分數: <span id="score">0</span></div>
+        <div id="crosshair">+</div>
+    </div>
+
+    <div id="blocker">
+        <div id="instructions">
+            <h1>英文單字特訓班</h1>
+            <p>使用 <span class="highlight">W A S D</span> 移動 (有腳步聲喔！)</p>
+            <p>使用 <span class="highlight">滑鼠</span> 瞄準與射擊</p>
+            <p>機器人頭上有<span class="highlight">中文意思</span>，射擊身上正確的<span class="highlight">英文單字</span>！</p>
+            <p style="font-size: 18px; margin-top: 30px; color: #888;">(點擊畫面開始遊戲，按 ESC 暫停)</p>
+        </div>
+    </div>
+
+    <script>
+        // 遊戲全域變數
+        let camera, scene, renderer, controls;
+        let objects = []; // 用於碰撞檢測
+        let robots = []; // 儲存所有機器人物件
+        let targetMeshes = []; // 可以被射擊的網格 (胸口、左腳、右腳)
+        
+        let moveForward = false;
+        let moveBackward = false;
+        let moveLeft = false;
+        let moveRight = false;
+        let stepTimer = 0.4; // 腳步聲音效計時器
+
+        let prevTime = performance.now();
+        const velocity = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+        
+        let score = 0;
+        const scoreElement = document.getElementById('score');
+
+        // 國中英文單字庫
+        const vocabList = [
+            { en: 'APPLE', zh: '蘋果' }, { en: 'BANANA', zh: '香蕉' },
+            { en: 'SCHOOL', zh: '學校' }, { en: 'TEACHER', zh: '老師' },
+            { en: 'STUDENT', zh: '學生' }, { en: 'FRIEND', zh: '朋友' },
+            { en: 'FAMILY', zh: '家庭' }, { en: 'WATER', zh: '水' },
+            { en: 'BOOK', zh: '書本' }, { en: 'HAPPY', zh: '快樂的' },
+            { en: 'BEAUTIFUL', zh: '美麗的' }, { en: 'RUN', zh: '跑步' },
+            { en: 'JUMP', zh: '跳躍' }, { en: 'DOG', zh: '狗' },
+            { en: 'CAT', zh: '貓' }, { en: 'BIRD', zh: '鳥' },
+            { en: 'FISH', zh: '魚' }, { en: 'TREE', zh: '樹木' },
+            { en: 'FLOWER', zh: '花朵' }, { en: 'SUN', zh: '太陽' },
+            { en: 'MORNING', zh: '早晨' }, { en: 'NIGHT', zh: '夜晚' }
+        ];
+        
+        // 音效系統 (使用 Web Audio API 生成簡單音效)
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playSound(type) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'shoot') {
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+            } else if (type === 'correct') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+                osc.frequency.setValueAtTime(800, audioCtx.currentTime + 0.1);
+                osc.frequency.setValueAtTime(1200, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.4);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.4);
+            } else if (type === 'wrong') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'step') {
+                // 模擬腳步聲 (短促低沉)
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(120, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + 0.08);
+                gainNode.gain.setValueAtTime(0.03, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.08);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.08);
+            }
+        }
+
+        init();
+        animate();
+
+        function init() {
+            // 1. 初始化場景與相機
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xFCE4EC); // 馬卡龍粉紅
+            scene.fog = new THREE.Fog(0xFCE4EC, 20, 100);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1000);
+            camera.position.y = 5; // 玩家身高
+
+            // 2. 燈光
+            const light = new THREE.HemisphereLight(0xeeeeff, 0x777788, 0.75);
+            light.position.set(0.5, 1, 0.75);
+            scene.add(light);
+            
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(20, 50, 20);
+            scene.add(dirLight);
+
+            // 3. 控制器 (第一人稱視角)
+            controls = new THREE.PointerLockControls(camera, document.body);
+
+            const blocker = document.getElementById('blocker');
+            const instructions = document.getElementById('instructions');
+
+            instructions.addEventListener('click', function () {
+                controls.lock();
+            });
+
+            controls.addEventListener('lock', function () {
+                instructions.style.display = 'none';
+                blocker.style.display = 'none';
+                if(audioCtx.state === 'suspended') audioCtx.resume();
+            });
+
+            controls.addEventListener('unlock', function () {
+                blocker.style.display = 'flex';
+                instructions.style.display = '';
+            });
+
+            scene.add(controls.getObject());
+
+            // 4. 鍵盤事件監聽
+            const onKeyDown = function (event) {
+                switch (event.code) {
+                    case 'ArrowUp':
+                    case 'KeyW': moveForward = true; break;
+                    case 'ArrowLeft':
+                    case 'KeyA': moveLeft = true; break;
+                    case 'ArrowDown':
+                    case 'KeyS': moveBackward = true; break;
+                    case 'ArrowRight':
+                    case 'KeyD': moveRight = true; break;
+                }
+            };
+
+            const onKeyUp = function (event) {
+                switch (event.code) {
+                    case 'ArrowUp':
+                    case 'KeyW': moveForward = false; break;
+                    case 'ArrowLeft':
+                    case 'KeyA': moveLeft = false; break;
+                    case 'ArrowDown':
+                    case 'KeyS': moveBackward = false; break;
+                    case 'ArrowRight':
+                    case 'KeyD': moveRight = false; break;
+                }
+            };
+
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+
+            // 5. 射擊事件 (滑鼠點擊)
+            document.addEventListener('mousedown', onMouseClick);
+
+            // 6. 建立環境 (地板) 馬卡龍色系
+            const floorGeometry = new THREE.PlaneGeometry(200, 200, 50, 50);
+            floorGeometry.rotateX(-Math.PI / 2);
+            // 建立方格地板紋理
+            const floorMaterial = new THREE.MeshBasicMaterial({ color: 0xFFB7B2, wireframe: true });
+            const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+            scene.add(floor);
+            
+            // 加入實心地板以便看不穿
+            const solidFloorMat = new THREE.MeshLambertMaterial({ color: 0xFFDAC1 });
+            const solidFloor = new THREE.Mesh(floorGeometry, solidFloorMat);
+            solidFloor.position.y = -0.1;
+            scene.add(solidFloor);
+
+            // 7. 渲染器
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            window.addEventListener('resize', onWindowResize);
+            
+            // 初始生成幾個機器人
+            for(let i = 0; i < 3; i++) {
+                spawnRobot();
+            }
+        }
+
+        // --- 繪製文字紋理的工具函數 ---
+        function createTextTexture(text, width, height, bgColor, textColor, defaultFontSize) {
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            
+            ctx.fillStyle = bgColor;
+            ctx.fillRect(0, 0, width, height);
+            
+            // 添加邊框
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 6;
+            ctx.strokeRect(0, 0, width, height);
+            
+            ctx.fillStyle = textColor;
+            // 動態調整字體大小以適應較長的英文單字
+            const fontSize = Math.min(defaultFontSize, (width * 1.5) / Math.max(text.length, 2));
+            ctx.font = `bold ${fontSize}px "Segoe UI", Arial, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, width / 2, height / 2);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            return texture;
+        }
+
+        // --- 生成英文單字問題 ---
+        function generateEnglishProblem() {
+            // 隨機選一個正確答案
+            const correctIndex = Math.floor(Math.random() * vocabList.length);
+            const correctVocab = vocabList[correctIndex];
+            
+            // 隨機選兩個錯誤答案
+            let wrong1Index = Math.floor(Math.random() * vocabList.length);
+            while(wrong1Index === correctIndex) {
+                wrong1Index = Math.floor(Math.random() * vocabList.length);
+            }
+            
+            let wrong2Index = Math.floor(Math.random() * vocabList.length);
+            while(wrong2Index === correctIndex || wrong2Index === wrong1Index) {
+                wrong2Index = Math.floor(Math.random() * vocabList.length);
+            }
+            
+            const question = correctVocab.zh; // 機器人頭上的中文
+            
+            // 打亂選項 (英文單字)
+            let options = [correctVocab.en, vocabList[wrong1Index].en, vocabList[wrong2Index].en];
+            options.sort(() => Math.random() - 0.5);
+            
+            return { question, ans: correctVocab.en, options };
+        }
+
+        // --- 生成機器人 ---
+        function spawnRobot() {
+            const problemData = generateEnglishProblem();
+            
+            const robotGroup = new THREE.Group();
+            
+            // 隨機生成起始位置 (在玩家周圍的圓圈上)
+            const angle = Math.random() * Math.PI * 2;
+            const radius = 40 + Math.random() * 20; // 距離玩家 40-60 單位
+            robotGroup.position.set(
+                camera.position.x + Math.cos(angle) * radius,
+                0,
+                camera.position.z + Math.sin(angle) * radius
+            );
+
+            // 馬卡龍通用材質
+            const bodyColors = [0xB5EAD7, 0xE2F0CB, 0xFFB7B2, 0xC7CEEA, 0xFFDAC1];
+            const randomColor = bodyColors[Math.floor(Math.random() * bodyColors.length)];
+            const bodyMat = new THREE.MeshLambertMaterial({ color: randomColor });
+            
+            // 1. 頭部 (顯示中文題目)
+            const headTex = createTextTexture(problemData.question, 512, 256, '#FFFFFF', '#FF6B8B', 120);
+            const headMaterials = [
+                bodyMat, bodyMat, bodyMat, bodyMat,
+                new THREE.MeshBasicMaterial({ map: headTex }), // 正面 (index 4)
+                bodyMat
+            ];
+            const headGeo = new THREE.BoxGeometry(4, 2.5, 2);
+            const head = new THREE.Mesh(headGeo, headMaterials);
+            head.position.y = 8.25;
+            robotGroup.add(head);
+
+            // 定義三個身體部位 (胸、左腳、右腳)
+            // 將腿的幾何原點偏移到頂部，方便走路時繞著骨盆旋轉
+            const legGeo = new THREE.BoxGeometry(2, 4, 2);
+            legGeo.translate(0, -2, 0); 
+
+            const chestGeo = new THREE.BoxGeometry(5, 3, 2);
+
+            const partsInfo = [
+                // 胸部中心 y=5.5
+                { name: 'chest', isLimb: false, geo: chestGeo, y: 5.5, x: 0, bg: '#FFFFFF', txt: '#555' },
+                // 腿部骨盆起點 y=4
+                { name: 'leftLeg', isLimb: true, type: 'leftLeg', geo: legGeo, y: 4, x: -1.5, bg: '#FFFFFF', txt: '#555' },
+                { name: 'rightLeg', isLimb: true, type: 'rightLeg', geo: legGeo, y: 4, x: 1.5, bg: '#FFFFFF', txt: '#555' }
+            ];
+
+            partsInfo.forEach((info, index) => {
+                const optValue = problemData.options[index];
+                const isCorrect = (optValue === problemData.ans);
+                
+                const tex = createTextTexture(optValue, 256, 256, info.bg, info.txt, 80);
+                const mats = [
+                    bodyMat, bodyMat, bodyMat, bodyMat,
+                    new THREE.MeshBasicMaterial({ map: tex }), // 正面顯示單字
+                    bodyMat
+                ];
+                
+                const mesh = new THREE.Mesh(info.geo, mats);
+                mesh.position.set(info.x, info.y, 0);
+                
+                // 儲存邏輯資料用於射擊判定
+                mesh.userData = {
+                    isTarget: true,
+                    isCorrect: isCorrect,
+                    value: optValue,
+                    robot: robotGroup,
+                    originalFaceMaterial: mats[4],
+                    limbType: info.type
+                };
+                
+                robotGroup.add(mesh);
+                targetMeshes.push(mesh); // 加入可射擊陣列
+            });
+
+            // 加上簡易的手臂裝飾，並設定旋轉軸在肩膀
+            const armGeo = new THREE.BoxGeometry(1, 3, 1);
+            armGeo.translate(0, -1.5, 0);
+            
+            const leftArm = new THREE.Mesh(armGeo, bodyMat);
+            leftArm.position.set(-3.5, 7, 0);
+            leftArm.userData = { limbType: 'leftArm' };
+            
+            const rightArm = new THREE.Mesh(armGeo, bodyMat);
+            rightArm.position.set(3.5, 7, 0);
+            rightArm.userData = { limbType: 'rightArm' };
+            
+            robotGroup.add(leftArm);
+            robotGroup.add(rightArm);
+
+            // 儲存機器人速度等資訊
+            robotGroup.userData = {
+                speed: 0.03 + Math.random() * 0.04, // 走路速度
+                bobbingTime: Math.random() * Math.PI * 2 // 走路晃動相位
+            };
+
+            scene.add(robotGroup);
+            robots.push(robotGroup);
+        }
+
+        // --- 射擊邏輯 ---
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2(0, 0); // 準心永遠在畫面中央
+
+        function onMouseClick() {
+            if (!controls.isLocked) return;
+
+            playSound('shoot');
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(targetMeshes);
+
+            if (intersects.length > 0) {
+                const hitMesh = intersects[0].object;
+                
+                if (hitMesh.userData.isTarget) {
+                    if (hitMesh.userData.isCorrect) {
+                        // 答對了！
+                        playSound('correct');
+                        score += 10;
+                        updateScore();
+                        destroyRobot(hitMesh.userData.robot);
+                        spawnRobot(); // 補充新機器人
+                    } else {
+                        // 答錯了！
+                        playSound('wrong');
+                        score = Math.max(0, score - 5); // 扣分
+                        updateScore();
+                        
+                        // 閃爍紅色提示錯誤
+                        const currentMat = hitMesh.material[4];
+                        hitMesh.material[4] = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+                        setTimeout(() => {
+                            // 若物件還存在才恢復
+                            if (hitMesh && hitMesh.parent) {
+                                hitMesh.material[4] = currentMat;
+                            }
+                        }, 200);
+                    }
+                }
+            }
+        }
+
+        function destroyRobot(robotGroup) {
+            // 從場景移除
+            scene.remove(robotGroup);
+            
+            // 從 robots 陣列移除
+            robots = robots.filter(r => r !== robotGroup);
+            
+            // 從 targetMeshes 陣列移除屬於此機器人的部位
+            targetMeshes = targetMeshes.filter(m => m.userData.robot !== robotGroup);
+            
+            // 釋放幾何與材質記憶體 (簡單清理)
+            robotGroup.children.forEach(child => {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(m => {
+                            if(m.map) m.map.dispose();
+                            m.dispose();
+                        });
+                    } else {
+                        if(child.material.map) child.material.map.dispose();
+                        child.material.dispose();
+                    }
+                }
+            });
+        }
+
+        function updateScore() {
+            scoreElement.innerText = score;
+            scoreElement.style.color = '#fff'; // 馬卡龍版本回饋色調整
+            setTimeout(() => { scoreElement.style.color = '#FF8BA7'; }, 300);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- 主遊戲迴圈 ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = performance.now();
+
+            if (controls.isLocked === true) {
+                const delta = (time - prevTime) / 1000;
+
+                // 1. 玩家移動邏輯 (簡單物理)
+                velocity.x -= velocity.x * 10.0 * delta;
+                velocity.z -= velocity.z * 10.0 * delta;
+
+                direction.z = Number(moveForward) - Number(moveBackward);
+                direction.x = Number(moveRight) - Number(moveLeft);
+                direction.normalize(); // 確保斜向移動速度一致
+
+                const speedMultiplier = 100.0;
+                let isMoving = false;
+                
+                if (moveForward || moveBackward) {
+                    velocity.z -= direction.z * speedMultiplier * delta;
+                    isMoving = true;
+                }
+                if (moveLeft || moveRight) {
+                    velocity.x -= direction.x * speedMultiplier * delta;
+                    isMoving = true;
+                }
+
+                // 處理腳步聲音效
+                if (isMoving) {
+                    stepTimer += delta;
+                    if (stepTimer > 0.4) { // 每 0.4 秒播放一次腳步聲
+                        playSound('step');
+                        stepTimer = 0;
+                    }
+                } else {
+                    stepTimer = 0.4; // 停止時重置，下次移動立刻播放
+                }
+
+                controls.moveRight(-velocity.x * delta);
+                controls.moveForward(-velocity.z * delta);
+                
+                // 限制玩家在競技場內 (避免走太遠)
+                const pos = controls.getObject().position;
+                if (pos.x > 80) pos.x = 80;
+                if (pos.x < -80) pos.x = -80;
+                if (pos.z > 80) pos.z = 80;
+                if (pos.z < -80) pos.z = -80;
+
+                // 2. 機器人移動與更新 (加上走路動畫)
+                const playerPos = new THREE.Vector3(camera.position.x, 0, camera.position.z);
+                
+                for (let i = robots.length - 1; i >= 0; i--) {
+                    const robot = robots[i];
+                    
+                    // 讓機器人永遠面向玩家
+                    robot.lookAt(playerPos.x, robot.position.y, playerPos.z);
+                    
+                    // 計算朝向玩家的向量
+                    const dirToPlayer = new THREE.Vector3().subVectors(playerPos, robot.position);
+                    const dist = dirToPlayer.length();
+                    
+                    if (dist > 5) {
+                        // 往玩家移動
+                        dirToPlayer.normalize();
+                        robot.position.addScaledVector(dirToPlayer, robot.userData.speed);
+                        
+                        // 走路動畫：更新 bobbingTime 並旋轉四肢
+                        robot.userData.bobbingTime += robot.userData.speed * 150 * delta; 
+                        const walkCycle = robot.userData.bobbingTime;
+                        
+                        robot.children.forEach(child => {
+                            if (child.userData.limbType === 'leftLeg' || child.userData.limbType === 'rightArm') {
+                                child.rotation.x = Math.sin(walkCycle) * 0.6; // 往前擺動
+                            } else if (child.userData.limbType === 'rightLeg' || child.userData.limbType === 'leftArm') {
+                                child.rotation.x = Math.sin(walkCycle + Math.PI) * 0.6; // 往後擺動
+                            }
+                        });
+                        
+                        // 身體微微上下浮動
+                        robot.position.y = Math.abs(Math.sin(walkCycle)) * 0.2;
+                    } else {
+                        // 機器人碰到玩家，重新生成
+                        destroyRobot(robot);
+                        score = Math.max(0, score - 2); // 碰到扣分
+                        updateScore();
+                        spawnRobot();
+                        playSound('wrong'); // 播放受傷音效
+                    }
+                }
+            }
+
+            prevTime = time;
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
