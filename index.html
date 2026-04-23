@@ -51,7 +51,7 @@
             width: 100%;
             height: 100%;
             background-color: rgba(255, 230, 240, 0.6);
-            display: flex;
+            display: none; /* 初始隱藏，等開場動畫結束再顯示 */
             align-items: center;
             justify-content: center;
             pointer-events: auto; /* 阻擋層需要接收點擊 */
@@ -93,13 +93,13 @@
             width: 100%;
             height: 100%;
             background-color: #FCE4EC; /* 馬卡龍粉紅底色 */
-            display: none;
+            display: flex; /* 初始顯示 */
             align-items: center;
             justify-content: center;
             z-index: 20;
             opacity: 1;
             transition: opacity 1s ease-out;
-            pointer-events: none;
+            pointer-events: auto; /* 阻擋下方點擊 */
         }
 
         #splash-screen img {
@@ -147,10 +147,6 @@
         let moveLeft = false;
         let moveRight = false;
         let stepTimer = 0.4; // 腳步聲音效計時器
-
-        // 開場動畫狀態控制
-        let isGameStarted = false;
-        let isSplashShowing = false;
 
         let prevTime = performance.now();
         const velocity = new THREE.Vector3();
@@ -215,6 +211,21 @@
             }
         }
 
+        // 開場動畫邏輯
+        window.onload = function() {
+            const splash = document.getElementById('splash-screen');
+            const blocker = document.getElementById('blocker');
+            
+            // 顯示 3 秒後開始淡出
+            setTimeout(() => {
+                splash.style.opacity = '0';
+                setTimeout(() => {
+                    splash.style.display = 'none';
+                    blocker.style.display = 'flex'; // 動畫結束後顯示開始按鈕
+                }, 1000); // 等待 1 秒的淡出過渡
+            }, 3000);
+        };
+
         init();
         animate();
 
@@ -250,39 +261,11 @@
                 instructions.style.display = 'none';
                 blocker.style.display = 'none';
                 if(audioCtx.state === 'suspended') audioCtx.resume();
-
-                // 首次進入遊戲時播放開場圖片
-                if (!isGameStarted) {
-                    isSplashShowing = true;
-                    const splash = document.getElementById('splash-screen');
-                    splash.style.display = 'flex';
-                    
-                    // 顯示 3 秒後開始淡出
-                    setTimeout(() => {
-                        splash.style.opacity = '0';
-                        setTimeout(() => {
-                            splash.style.display = 'none';
-                            isSplashShowing = false;
-                            isGameStarted = true;
-                        }, 1000); // 等待 1 秒的淡出動畫
-                    }, 3000); // 顯示 3 秒
-                }
             });
 
             controls.addEventListener('unlock', function () {
-                if (!isSplashShowing) {
-                    blocker.style.display = 'flex';
-                    instructions.style.display = '';
-                } else {
-                    // 若在開場動畫時按 ESC 退出
-                    blocker.style.display = 'flex';
-                    instructions.style.display = '';
-                    const splash = document.getElementById('splash-screen');
-                    splash.style.display = 'none';
-                    splash.style.opacity = '0';
-                    isSplashShowing = false;
-                    isGameStarted = true; 
-                }
+                blocker.style.display = 'flex';
+                instructions.style.display = '';
             });
 
             scene.add(controls.getObject());
@@ -506,8 +489,8 @@
         const mouse = new THREE.Vector2(0, 0); // 準心永遠在畫面中央
 
         function onMouseClick() {
-            // 如果還沒鎖定滑鼠，或者正在顯示開場動畫，則不能射擊
-            if (!controls.isLocked || isSplashShowing) return;
+            // 如果還沒鎖定滑鼠，則不能射擊
+            if (!controls.isLocked) return;
 
             playSound('shoot');
 
@@ -590,8 +573,7 @@
 
             const time = performance.now();
 
-            // 必須在鎖定滑鼠且非開場動畫期間才執行遊戲邏輯
-            if (controls.isLocked === true && !isSplashShowing) {
+            if (controls.isLocked === true) {
                 const delta = (time - prevTime) / 1000;
 
                 // 1. 玩家移動邏輯 (簡單物理)
